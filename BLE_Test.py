@@ -1,36 +1,29 @@
 import asyncio
-from bleak import BleakClient, BleakScanner
-from bleak.backends.device import BLEDevice
-from bleak.backends.scanner import AdvertisementData
+from bleak import BleakScanner
 
-TARGET_NAME = "Mi 10"  # Replace with your device's advertised name
+TARGET_NAME = "Mi 10"
+TX_POWER = -59   # Calibrated RSSI at 1 meter (adjust if needed)
+N = 2.0          # Path loss exponent (2 = free space, 2.7–4 = indoors)
+
+def estimate_distance(rssi, tx_power=TX_POWER, n=N):
+    return 10 ** ((tx_power - rssi) / (10 * n))
+
+def callback(device, adv_data):
+    if device.name == TARGET_NAME:
+        distance = estimate_distance(device.rssi)
+        print(f"📡 {device.name} | RSSI: {device.rssi} dBm | Estimated distance: {distance:.2f} m")
 
 async def main():
-    print(f"Searching for device named '{TARGET_NAME}'...")
-    devices = await BleakScanner.discover(timeout=5)
-    target_device = next((d for d in devices if d.name == TARGET_NAME), None)
-
-    if not target_device:
-        print(f"Device '{TARGET_NAME}' not found.")
-        return
-
-    
-    while True:
-        print(f"\n🔍 Attempting to connect to {TARGET_NAME} at {target_device.address}...")
-        async with BleakClient(target_device.address) as client:
-            if client.is_connected:
-                print(f"✅ Connected to {TARGET_NAME} at {target_device.address}")
-                try:
-                    while True:
-                        rssi = await client.get_rssi()
-                        print(f"📶 RSSI: {rssi} dBm")
-                        await asyncio.sleep(1)
-                except KeyboardInterrupt:
-                    print("🛑 Stopping RSSI updates...")
-                    break
-            else:
-                print("❌ Failed to connect.")
-                await asyncio.sleep(5)
+    scanner = BleakScanner()
+    scanner.register_detection_callback(callback)
+    await scanner.start()
+    print(f"🔍 Scanning for '{TARGET_NAME}'... Press Ctrl+C to stop.")
+    try:
+        while True:
+            await asyncio.sleep(1)
+    except KeyboardInterrupt:
+        await scanner.stop()
+        print("🛑 Scan stopped.")
 
 if __name__ == "__main__":
     asyncio.run(main())
