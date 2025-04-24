@@ -1,0 +1,33 @@
+import pywifi
+from pywifi import const
+import time
+
+TARGET_SSID = "Willem "  # ← Change this to your phone's hotspot name
+TX_POWER = -45  # RSSI at 1 meter (adjust for calibration)
+N = 3.0         # Path loss exponent (2 = free space, 2.7–4 indoors)
+
+def estimate_distance(rssi, tx_power=TX_POWER, n=N):
+    return 10 ** ((tx_power - rssi) / (10 * n))
+
+def main():
+    wifi = pywifi.PyWiFi()
+    iface = wifi.interfaces()[0]
+
+    while True:
+        iface.scan()
+        #time.sleep(0.1)  # let the scan complete
+        results = iface.scan_results()
+        found = False
+
+        for network in results:
+            if network.ssid == TARGET_SSID:
+                distance = estimate_distance(network.signal)
+                print(f"📶 Found {network.ssid} | RSSI: {network.signal} dBm | Estimated Distance: {distance:.2f} m")
+                found = True
+                break
+
+        if not found:
+            print("❌ Hotspot not found.")
+
+if __name__ == "__main__":
+    main()
