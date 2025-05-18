@@ -27,6 +27,16 @@ def detect_color(frame_hsv, color):
     return contours
 
 
+def detect_color_morpho(frame_hsv, color):  # inconsisent lighting
+    """Detect contours for a given color."""
+    mask = cv2.inRange(frame_hsv, color.get_lower_bound(), color.get_upper_bound())
+    kernel = np.ones((5, 5), np.uint8)
+    mask_open_closed = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)
+    mask_open_closed = cv2.morphologyEx(mask_open_closed, cv2.MORPH_CLOSE, kernel, iterations=2)
+    contours, _ = cv2.findContours(mask_open_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return contours
+
+
 def get_closest_blob_to_position(contours, previous_position):
     """Find the blob closest to the previous position."""
     closest_blob = None
@@ -92,7 +102,7 @@ def initialize_kalman_filter():
                                     [0, 0, 1, 0],
                                     [0, 0, 0, 1]], np.float32)
     kf.measurementMatrix = np.eye(2, 4, dtype=np.float32)
-    kf.processNoiseCov = np.eye(4, dtype=np.float32) * 1e-2
+    kf.processNoiseCov = np.eye(4, dtype=np.float32) * 1e-2 * 5
     kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 1e-1
     return kf
 
@@ -103,17 +113,21 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     cap.set(cv2.CAP_PROP_FPS, 60)
 
-    all_tracked_colors = [green, purple, yellow, blue, white]
+    all_tracked_colors = [green, purple, yellow, blue]
 
-    # Initialize KF
+    ## Color print in BGR
+    print_color = {"Green": (0, 255, 0), "Purple": (255, 0, 255), "Yellow": (0, 200, 255), "Blue": (255, 135, 0),
+                   "White": (255, 255, 255)}
+    print_compl_color = {"Green": (0, 0, 255), "Purple": (0, 255, 255), "Yellow": (255, 120, 175),
+                         "Blue": (0, 135, 255), "White": (0, 0, 0)}
+
+    ## PARAMETER for Detection AND prediction
+    decay_factor = 0.5
+    contour_threshold_list = {"Green": 2, "Purple": 2, "Yellow": 2, "Blue": 2, "White": 2}
+    reset_threshold_list = {"Green": 50, "Purple": 50, "Yellow": 50, "Blue": 50, "White": 50}
+    ## Initialize KF
     kalman_filters = {}
     initialized_flags = {}
-    contour_threshold_list = {"Green": 25, "Purple": 25, "Yellow": 25, "Blue": 25, "White": 25}
-    reset_threshold_list = {"Green": 100, "Purple": 100, "Yellow": 100, "Blue": 100, "White": 100}
-    print_color = {"Green": (0, 255, 0), "Purple": (255, 0, 255), "Yellow": (255, 200, 0), "Blue": (0, 135, 255),
-                   "White": (255, 255, 255)}
-    print_compl_color = {"Green": (255, 0, 0), "Purple": (255, 255, 0), "Yellow": (120, 0, 255), "Blue": (255, 135, 0),
-                         "White": (0, 0, 0)}
     for color in all_tracked_colors:
         kalman_filters[color.get_name()] = initialize_kalman_filter()
         initialized_flags[color.get_name()] = False
@@ -127,9 +141,18 @@ def main():
 
             frame_hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
+            ## ADD Histogram equalization to V channel (brightness) to correct for contrast issues
+            # h, s, v = cv2.split(frame_hsv)
+            # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            # v_eq = clahe.apply(v)
+            # frame_hsv = cv2.merge([h, s, v_eq])
+
             for color in all_tracked_colors:
-                # CHANGE MORPHO
-                contours = detect_color(frame_hsv, color)
+                ## Contours: Only OPEN MORPHOLOGICAL
+                # contours = detect_color(frame_hsv, color)
+                ## Contours: Both OPEN and COSED MORPHOLOGICAL
+                contours = detect_color_morpho(frame_hsv, color)
+
                 # KF
                 name = color.get_name()
                 kf = kalman_filters[name]
@@ -149,29 +172,46 @@ def main():
                     min_dist, best_cx, best_cy = get_closest_blob_to_prediction(contours, pred_x, pred_y)
 
                     if best_cx is not None and best_cy is not None:
-                        if not initialized:  # Only first time
+                        # INITIALIZE KALMAN FILTER only first time
+                        if not initialized:
                             kf.statePost = np.array([[best_cx], [best_cy], [0], [0]], np.float32)
                             initialized = True
 
+                        # MEASUREMNT
                         if min_dist < contour_threshold:
                             measurement = np.array([[best_cx], [best_cy]], np.float32)
                             est = kf.correct(measurement)
                             est_x, est_y = int(est[0]), int(est[1])
                             cv2.circle(frame, (est_x, est_y), 5, print_color[name], -1)
-                            cv2.putText(frame, f"KF for {name}: ({est_x},{est_y})", (est_x + 10, est_y),
+                            cv2.putText(frame, f"Measuremnt for {name}: ({est_x},{est_y})", (est_x + 10, est_y),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, print_color[name], 1)
                         elif min_dist < reset_threshold:
                             cv2.circle(frame, (pred_x, pred_y), 5, print_compl_color[name], -1)
                             cv2.putText(frame, f"KF PREDICTION for {name}: bad measurement", (pred_x + 10, pred_y + 20),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, print_compl_color[name], 1)
-                        else:  # RESET if distance too big
-                            # Reassociate — reinitialize Kalman filter
-                            cv2.putText(frame,
-                                        "Reinitializing Kalman due to distant measurement. Min Dist:" + str(min_dist),
-                                        (100, 0),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
-                            print("Reinitializing Kalman due to distant measurement. Min Dist:" + str(min_dist))
-                            kf.statePost = np.array([[best_cx], [best_cy], [0], [0]], np.float32)  # reinitialize
+                        else:
+                            # Preserve velocity from the last known state
+                            vx = kf.statePost[2][0]
+                            vy = kf.statePost[3][0]
+
+                            # Optionally apply damping to avoid runaway drift
+                            vx *= decay_factor
+                            vy *= decay_factor
+
+                            # Reinitialize position but keep velocity
+                            kf.statePost = np.array([[best_cx], [best_cy], [vx], [vy]], np.float32)
+
+                            cv2.circle(frame, (pred_x, pred_y), 5, print_compl_color[name], -1)
+                            cv2.putText(frame, f"KF PREDICTION for {name}: VELOCITY", (pred_x + 10, pred_y + 20),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, print_compl_color[name], 1)
+                            print(f"[{name}] Reinitialized with preserved velocity. dist = {min_dist:.2f}")
+
+                        # else: # RESET if distance too big
+                        #     # Reassociate — reinitialize Kalman filter
+                        #     cv2.putText(frame, f"Reinitializing Kalman for {name}. Min Dist:" + str(min_dist), (100, 0),
+                        #                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
+                        #     print("Reinitializing Kalman due to distant measurement. Min Dist:" + str(min_dist))
+                        #     kf.statePost = np.array([[best_cx], [best_cy], [0], [0]], np.float32) # reinitialize
 
             cv2.imshow('Color Tracking', frame)
             if cv2.waitKey(1) & 0xFF == ord('q'):
