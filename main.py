@@ -10,11 +10,13 @@ import json
 # Define expected area (in pixels)
 EXPECTED_AREA = 150  # Adjust this value based on your use case
 
+# Load calibration data
 data = np.load("calibration_data.npz")
 homography = data["homography"]
 play_center = tuple(data["play_center"])
 play_radius = int(data["play_radius"])
 calibration_resolution = tuple(data["calibration_resolution"]) if "calibration_resolution" in data else None
+square_diagonal_m = float(data["square_diagonal_m"]) if "square_diagonal_m" in data else None
 
 for key in data.files:
     print(f"{key}:")
@@ -132,7 +134,7 @@ def initialize_kalman_filter():
 # MQTT settings
 broker = "broker.hivemq.com"
 port = 1883
-topic = "catmouse/coordinates"
+topic = "XRCatAndMouse/1111"
 client = mqtt.Client()
 client.connect(broker, port, 60)
 
@@ -140,6 +142,23 @@ SEND_FREQUENCY_HZ = 10  # Adjust how often data is sent (Hz)
 SEND_INTERVAL = 1.0 / SEND_FREQUENCY_HZ
 last_send_time = 0
 
+def transform_to_play_area_meters(pos, play_center, play_radius, square_diagonal_m):
+    """
+    Transform pixel coordinates to play area coordinates in meters:
+    - Center is (0,0)
+    - Range is -diagonal/2 to diagonal/2 in both x and y (in meters)
+    """
+    if pos is None or pos["x"] is None or pos["y"] is None or square_diagonal_m is None:
+        return {"x": None, "y": None}
+    # Pixels per meter along the diagonal
+    pixels_per_meter = (play_radius * 2) / square_diagonal_m
+    # Shift to center, then convert to meters
+    dx = (pos["x"] - play_center[0]) / pixels_per_meter
+    dy = (pos["y"] - play_center[1]) / pixels_per_meter
+    return {
+        "x": round(dx, 4),
+        "y": round(dy, 4)
+    }
 
 def main():
     cap = cv2.VideoCapture(0)
@@ -270,14 +289,15 @@ def main():
             now = time.time()
             if now - last_send_time >= SEND_INTERVAL:
                 # Example: send green as "cat", blue as "mouse"
-                cat = detected_positions.get("Green", {"x": None, "y": None})
-                mouse = detected_positions.get("Blue", {"x": None, "y": None})
+                cat_pixel = detected_positions.get("Green", {"x": None, "y": None})
+                mouse_pixel = detected_positions.get("Blue", {"x": None, "y": None})
+                cat = transform_to_play_area_meters(cat_pixel, play_center, play_radius, square_diagonal_m)
+                mouse = transform_to_play_area_meters(mouse_pixel, play_center, play_radius, square_diagonal_m)
                 message = {
+                    "message": "coordinates",
                     "timestamp": int(now * 1000),
-                    "cat": {"x": round(cat["x"], 1) if cat and cat["x"] is not None else None,
-                            "y": round(cat["y"], 1) if cat and cat["y"] is not None else None},
-                    "mouse": {"x": round(mouse["x"], 1) if mouse and mouse["x"] is not None else None,
-                              "y": round(mouse["y"], 1) if mouse and mouse["y"] is not None else None}
+                    "cat": cat,
+                    "mouse": mouse
                 }
                 json_message = json.dumps(message)
                 client.publish(topic, json_message)
@@ -294,3 +314,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

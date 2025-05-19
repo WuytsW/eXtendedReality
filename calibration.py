@@ -14,16 +14,18 @@ camera_height = 1080
 calib_disp_width = 960
 calib_disp_height = 540
 
-def save_calibration(homography, play_center, play_radius, calibration_resolution, filename="calibration_data.npz"):
+def save_calibration(homography, play_center, play_radius, calibration_resolution, diagonal_m, margin_m, filename="calibration_data.npz"):
     np.savez(
         filename,
         homography=homography,
         play_center=play_center,
         play_radius=play_radius,
-        calibration_resolution=calibration_resolution
+        calibration_resolution=calibration_resolution,
+        square_diagonal_m=diagonal_m,
+        margin_m=margin_m
     )
 
-def get_reference_square(screen_width, screen_height, angle=45, margin_percent=0.05):
+def get_reference_square(screen_width, screen_height, angle=-45, margin_percent=0.05):
     """
     Generate a square with a margin (as a percentage of width/height) such that,
     after rotation, the square fits within the frame with the specified margin.
@@ -111,7 +113,7 @@ class HomographyCalibrationApp:
                 cv2.circle(orig, disp_pt, 5, (0, 255, 0), -1)
                 cv2.putText(orig, str(idx + 1), disp_pt, cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             h, w = orig.shape[:2]
-            angle = 45
+            angle = -45
             diagonal_m = self.diagonal_m.get()
             if diagonal_m > 0:
                 real_square_size_m = diagonal_m / (2 ** 0.5)
@@ -192,7 +194,7 @@ class HomographyCalibrationApp:
                 pass
             case "CALCULATE":
                 h, w = self.frame.shape[:2]
-                angle = 45
+                angle = -45
                 # Use new reference square with 5% margin, ensuring fit after rotation
                 target_square = get_reference_square(w, h, angle, margin_percent=0.05)
                 self.fsm.calculate(target_square)
@@ -220,7 +222,7 @@ class HomographyCalibrationApp:
     def on_save(self):
         if self.fsm.homography is not None:
             h, w = camera_height, camera_width
-            angle = 45
+            angle = -45
             diagonal_m = self.diagonal_m.get()
             if diagonal_m > 0:
                 real_square_size_m = diagonal_m / (2 ** 0.5)
@@ -231,7 +233,8 @@ class HomographyCalibrationApp:
             margin_m = self.margin_m.get()
             play_center, play_radius = calibrate_playing_area(target_square, real_square_size_m, margin_m)
             calibration_resolution = (camera_width, camera_height)  # Save camera resolution, not display
-            save_calibration(self.fsm.homography, play_center, play_radius, calibration_resolution)
+            # Store diagonal_m and margin_m in calibration file
+            save_calibration(self.fsm.homography, play_center, play_radius, calibration_resolution, diagonal_m, margin_m)
 
 if __name__ == "__main__":
     root = tk.Tk()
