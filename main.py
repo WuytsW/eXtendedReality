@@ -232,12 +232,12 @@ def main():
                             measurement = np.array([[best_cx], [best_cy]], np.float32)
                             est = kf.correct(measurement)
                             est_x, est_y = int(est[0]), int(est[1])
-                            cv2.circle(frame, (est_x, est_y), 5, print_color[name], -1)
-                            cv2.putText(frame, f"Measuremnt for {name}: ({est_x},{est_y})", (est_x + 10, est_y),
+                            cv2.circle(warped, (est_x, est_y), 5, print_color[name], -1)
+                            cv2.putText(warped, f"Measuremnt for {name}: ({est_x},{est_y})", (est_x + 10, est_y),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, print_color[name], 1)
                         elif min_dist < reset_threshold:
-                            cv2.circle(frame, (pred_x, pred_y), 5, print_compl_color[name], -1)
-                            cv2.putText(frame, f"KF PREDICTION for {name}: bad measurement", (pred_x + 10, pred_y + 20),
+                            cv2.circle(warped, (pred_x, pred_y), 5, print_compl_color[name], -1)
+                            cv2.putText(warped, f"KF PREDICTION for {name}: bad measurement", (pred_x + 10, pred_y + 20),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, print_compl_color[name], 1)
                         else:
                             # Preserve velocity from the last known state
@@ -251,17 +251,10 @@ def main():
                             # Reinitialize position but keep velocity
                             kf.statePost = np.array([[best_cx], [best_cy], [vx], [vy]], np.float32)
 
-                            cv2.circle(frame, (pred_x, pred_y), 5, print_compl_color[name], -1)
-                            cv2.putText(frame, f"KF PREDICTION for {name}: VELOCITY", (pred_x + 10, pred_y + 20),
+                            cv2.circle(warped, (pred_x, pred_y), 5, print_compl_color[name], -1)
+                            cv2.putText(warped, f"KF PREDICTION for {name}: VELOCITY", (pred_x + 10, pred_y + 20),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, print_compl_color[name], 1)
-                            print(f"[{name}] Reinitialized with preserved velocity. dist = {min_dist:.2f}")
-
-                        # else: # RESET if distance too big
-                        #     # Reassociate — reinitialize Kalman filter
-                        #     cv2.putText(frame, f"Reinitializing Kalman for {name}. Min Dist:" + str(min_dist), (100, 0),
-                        #                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
-                        #     print("Reinitializing Kalman due to distant measurement. Min Dist:" + str(min_dist))
-                        #     kf.statePost = np.array([[best_cx], [best_cy], [0], [0]], np.float32) # reinitialize
+                            print(f"[{name}] Reinitialized with preserved velocity. dist = {min_dist:.2f}")            
                     else:
                         detected_positions[name] = None
                 else:
