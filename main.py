@@ -49,6 +49,15 @@ def detect_color_morpho(frame_hsv, color):  # inconsisent lighting
     contours, _ = cv2.findContours(mask_open_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     return contours
 
+def adaptive_detect_color_morpho(frame_hsv, adaptive_hsv_bounds):
+    """Detect contours for a given color with adaptive HSV mask."""
+    lower, upper = adaptive_hsv_bounds
+    mask = cv2.inRange(frame_hsv, lower, upper)
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return contours
 
 def get_closest_blob_to_position(contours, previous_position):
     """Find the blob closest to the previous position."""
@@ -140,16 +149,17 @@ def main():
 
     all_tracked_colors = [green, purple, yellow, blue]
 
-    ## Color print in BGR
+    ## DEBUG ## Color print in BGR
     print_color = {"Green": (0, 255, 0), "Purple": (255, 0, 255), "Yellow": (0, 200, 255), "Blue": (255, 135, 0),
                    "White": (255, 255, 255)}
     print_compl_color = {"Green": (0, 0, 255), "Purple": (0, 255, 255), "Yellow": (255, 120, 175),
                          "Blue": (0, 135, 255), "White": (0, 0, 0)}
 
-    ## PARAMETER for Detection AND prediction
+    ## PARAMETER for Detection AND prediction 
     decay_factor = 0.5
     contour_threshold_list = {"Green": 2, "Purple": 2, "Yellow": 2, "Blue": 2, "White": 2}
     reset_threshold_list = {"Green": 50, "Purple": 50, "Yellow": 50, "Blue": 50, "White": 50}
+    adaptive_hsv_bounds = {color.get_name(): None for color in all_tracked_colors}
     ## Initialize KF
     kalman_filters = {}
     initialized_flags = {}
@@ -185,11 +195,6 @@ def main():
             detected_positions = {}
 
             for color in all_tracked_colors:
-                ## Contours: Only OPEN MORPHOLOGICAL
-                # contours = detect_color(frame_hsv, color)
-                ## Contours: Both OPEN and COSED MORPHOLOGICAL
-                contours = detect_color_morpho(frame_hsv, color)
-
                 # KF
                 name = color.get_name()
                 kf = kalman_filters[name]
@@ -199,6 +204,13 @@ def main():
                 reset_threshold = reset_threshold_list[name]
                 best_cx, best_cy = None, None
                 min_dist = float('inf')
+
+                if adaptive_hsv_bounds[name] is not None:
+                    ## Adaptive HSV
+                    contours = adaptive_detect_color_morpho(frame_hsv, adaptive_hsv_bounds[name])                
+                else:
+                    ## Predefined HSV
+                    contours = detect_color_morpho(frame_hsv, color)
 
                 # KF prediction
                 prediction = kf.predict()
