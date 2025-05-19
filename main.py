@@ -3,10 +3,23 @@ import numpy as np
 from color_ranges import green, purple, yellow, blue, white
 from matplotlib.colors import CSS4_COLORS
 import matplotlib
+import paho.mqtt.client as mqtt
+import time
+import json
 
 # Define expected area (in pixels)
 EXPECTED_AREA = 150  # Adjust this value based on your use case
 
+data = np.load("calibration_data.npz")
+homography = data["homography"]
+play_center = tuple(data["play_center"])
+play_radius = int(data["play_radius"])
+calibration_resolution = tuple(data["calibration_resolution"]) if "calibration_resolution" in data else None
+
+for key in data.files:
+    print(f"{key}:")
+    print(data[key])
+    print()
 
 def color_name_to_rgb(color_name):
     """Convert a color name to an RGB tuple (0-255 range)."""
@@ -107,6 +120,18 @@ def initialize_kalman_filter():
     return kf
 
 
+# MQTT settings
+broker = "broker.hivemq.com"
+port = 1883
+topic = "catmouse/coordinates"
+client = mqtt.Client()
+client.connect(broker, port, 60)
+
+SEND_FREQUENCY_HZ = 10  # Adjust how often data is sent (Hz)
+SEND_INTERVAL = 1.0 / SEND_FREQUENCY_HZ
+last_send_time = 0
+
+
 def main():
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
@@ -132,6 +157,13 @@ def main():
         kalman_filters[color.get_name()] = initialize_kalman_filter()
         initialized_flags[color.get_name()] = False
 
+    # Set display resolution (fits twice on most screens, 16:9)
+    display_width = 960
+    display_height = 540
+
+    # For MQTT sending
+    global last_send_time
+
     # Actual loop
     try:
         while True:
@@ -139,13 +171,18 @@ def main():
             if not ret:
                 break
 
-            frame_hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            # Resize to calibration resolution if present
+            if calibration_resolution is not None:
+                frame = cv2.resize(frame, calibration_resolution, interpolation=cv2.INTER_AREA)
 
-            ## ADD Histogram equalization to V channel (brightness) to correct for contrast issues
-            # h, s, v = cv2.split(frame_hsv)
-            # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            # v_eq = clahe.apply(v)
-            # frame_hsv = cv2.merge([h, s, v_eq])
+            # Apply homography transformation
+            warped = cv2.warpPerspective(frame, homography, (frame.shape[1], frame.shape[0]))
+
+            # Use the warped frame for color detection
+            frame_hsv = cv2.cvtColor(warped, cv2.COLOR_BGR2HSV)
+
+            # Prepare detected positions for MQTT
+            detected_positions = {}
 
             for color in all_tracked_colors:
                 ## Contours: Only OPEN MORPHOLOGICAL
@@ -172,6 +209,7 @@ def main():
                     min_dist, best_cx, best_cy = get_closest_blob_to_prediction(contours, pred_x, pred_y)
 
                     if best_cx is not None and best_cy is not None:
+                        detected_positions[name] = {"x": float(best_cx), "y": float(best_cy)}
                         # INITIALIZE KALMAN FILTER only first time
                         if not initialized:
                             kf.statePost = np.array([[best_cx], [best_cy], [0], [0]], np.float32)
@@ -212,13 +250,41 @@ def main():
                         #                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 0, 0), 1)
                         #     print("Reinitializing Kalman due to distant measurement. Min Dist:" + str(min_dist))
                         #     kf.statePost = np.array([[best_cx], [best_cy], [0], [0]], np.float32) # reinitialize
+                    else:
+                        detected_positions[name] = None
+                else:
+                    detected_positions[name] = None
 
-            cv2.imshow('Color Tracking', frame)
+            # Resize warped frame for display
+            warped_display = cv2.resize(warped, (display_width, display_height), interpolation=cv2.INTER_AREA)
+
+            # Show the warped (homography-transformed) camera view instead of the normal frame
+            cv2.imshow('Color Tracking', warped_display)
+
+            # MQTT sending logic
+            now = time.time()
+            if now - last_send_time >= SEND_INTERVAL:
+                # Example: send green as "cat", blue as "mouse"
+                cat = detected_positions.get("Green", {"x": None, "y": None})
+                mouse = detected_positions.get("Blue", {"x": None, "y": None})
+                message = {
+                    "timestamp": int(now * 1000),
+                    "cat": {"x": round(cat["x"], 1) if cat and cat["x"] is not None else None,
+                            "y": round(cat["y"], 1) if cat and cat["y"] is not None else None},
+                    "mouse": {"x": round(mouse["x"], 1) if mouse and mouse["x"] is not None else None,
+                              "y": round(mouse["y"], 1) if mouse and mouse["y"] is not None else None}
+                }
+                json_message = json.dumps(message)
+                client.publish(topic, json_message)
+                # print(f"Published: {json_message}")
+                last_send_time = now
+
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
     finally:
         cap.release()
         cv2.destroyAllWindows()
+        client.disconnect()
 
 
 if __name__ == "__main__":
