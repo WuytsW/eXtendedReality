@@ -5,8 +5,6 @@ import cv2
 import numpy as np
 import os
 
-#beans
-
 COLOR_COLLECTION_FILE = "color_collection.npz"
 
 class DoubleSlider(tk.Canvas):
@@ -94,6 +92,22 @@ class ColorCalibrationApp:
         self.selected_hsvs = []  # Store multiple HSVs
         self.selected_bgrs = []
 
+        # Disable auto exposure, white balance, and autofocus
+        self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)  # Manual mode
+        self.cap.set(cv2.CAP_PROP_AUTO_WB, 0)
+        self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+
+        # Get initial values (try to read from camera, fallback to defaults)
+        init_exposure = self.cap.get(cv2.CAP_PROP_EXPOSURE)
+        if init_exposure == 0 or init_exposure == -1:
+            init_exposure = -4  # Reasonable default for many webcams
+        init_wb = self.cap.get(cv2.CAP_PROP_WB_TEMPERATURE)
+        if init_wb == 0 or init_wb == -1:
+            init_wb = 4500  # Neutral white
+        init_focus = self.cap.get(cv2.CAP_PROP_FOCUS)
+        if init_focus == 0 or init_focus == -1:
+            init_focus = 0  # Default focus value
+
         # UI
         self.top_frame = tk.Frame(root)
         self.top_frame.pack(side=tk.TOP, fill=tk.X)
@@ -118,6 +132,34 @@ class ColorCalibrationApp:
 
         self.label = tk.Label(self.top_frame, text="Click on the image to sample HSV (multiple allowed).")
         self.label.pack(side=tk.LEFT, padx=10)
+
+        # Exposure, White Balance, and Focus sliders
+        self.cam_settings_frame = tk.Frame(root)
+        self.cam_settings_frame.pack(side=tk.TOP, fill=tk.X, pady=5)
+
+        tk.Label(self.cam_settings_frame, text="Focus").pack(side=tk.LEFT, padx=5)
+        self.focus_var = tk.DoubleVar(value=init_focus)
+        self.focus_slider = tk.Scale(
+            self.cam_settings_frame, from_=0, to=255, resolution=1, orient=tk.HORIZONTAL,
+            variable=self.focus_var, length=200, command=self.on_focus_change
+        )
+        self.focus_slider.pack(side=tk.LEFT, padx=5)
+
+        tk.Label(self.cam_settings_frame, text="Exposure").pack(side=tk.LEFT, padx=5)
+        self.exposure_var = tk.DoubleVar(value=init_exposure)
+        self.exposure_slider = tk.Scale(
+            self.cam_settings_frame, from_=-13, to=0, resolution=0.1, orient=tk.HORIZONTAL,
+            variable=self.exposure_var, length=200, command=self.on_exposure_change
+        )
+        self.exposure_slider.pack(side=tk.LEFT, padx=5)
+
+        tk.Label(self.cam_settings_frame, text="White Balance (K)").pack(side=tk.LEFT, padx=5)
+        self.wb_var = tk.DoubleVar(value=init_wb)
+        self.wb_slider = tk.Scale(
+            self.cam_settings_frame, from_=2800, to=6500, resolution=10, orient=tk.HORIZONTAL,
+            variable=self.wb_var, length=200, command=self.on_wb_change
+        )
+        self.wb_slider.pack(side=tk.LEFT, padx=5)
 
         # Main frame to hold camera and HSV info side by side
         self.main_frame = tk.Frame(root)
@@ -147,6 +189,26 @@ class ColorCalibrationApp:
         self.stats_frame.grid(row=0, column=5, rowspan=100, padx=(20, 0), sticky="nw")
 
         self.update_frame()
+
+    def on_focus_change(self, val):
+        try:
+            self.cap.set(cv2.CAP_PROP_FOCUS, float(val))
+        except Exception as e:
+            print(f"Error setting focus: {e}")
+
+    def on_exposure_change(self, val):
+        try:
+            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+            self.cap.set(cv2.CAP_PROP_EXPOSURE, float(val))
+        except Exception:
+            pass
+
+    def on_wb_change(self, val):
+        try:
+            self.cap.set(cv2.CAP_PROP_AUTO_WB, 0)
+            self.cap.set(cv2.CAP_PROP_WB_TEMPERATURE, float(val))
+        except Exception:
+            pass
 
     def load_homography(self):
         file_path = filedialog.askopenfilename(filetypes=[("NPZ files", "*.npz")])
@@ -198,16 +260,29 @@ class ColorCalibrationApp:
             lower = np.array([l_h, l_s, l_v], dtype=np.uint8)
             upper = np.array([u_h, u_s, u_v], dtype=np.uint8)
             # Get condition from dropdown or entry
-            selected = condition_var.get()
-            if selected == "__new__":
+            selected_condition = condition_var.get()
+            if selected_condition == "__new__":
                 condition = condition_entry.get()
             else:
-                condition = selected
-            # Store as a dict: name -> (lower, upper, condition)
+                condition = selected_condition
+            # Save camera settings
+            exposure = float(self.exposure_var.get())
+            wb_temp = float(self.wb_var.get())
+            focus = float(self.focus_var.get())
+            # Store as a dict: name -> (lower, upper, condition, exposure, wb_temp, focus)
+            # Check if the color already exists with the same name and condition
+            for existing_name, existing_data in collection.copy().items():
+                existing_data = existing_data.item() if hasattr(existing_data, "item") else existing_data
+                existing_condition = existing_data.get("condition", "")
+                if existing_name == color_name and existing_condition == condition:
+                    del collection[existing_name]  # Remove the existing entry
             collection[color_name] = {
                 "lower_bound": lower,
                 "upper_bound": upper,
-                "condition": condition
+                "condition": condition,
+                "exposure": exposure,
+                "wb_temp": wb_temp,
+                "focus": focus
             }
             np.savez(COLOR_COLLECTION_FILE, **collection)
             dialog.destroy()
@@ -302,18 +377,24 @@ class ColorCalibrationApp:
         dialog = Toplevel(self.root)
         dialog.title("Stored Colors")
 
-        tk.Label(dialog, text="Stored Colors", font=("Arial", 12, "bold")).grid(row=0, column=0, columnspan=5, pady=10)
+        tk.Label(dialog, text="Stored Colors", font=("Arial", 12, "bold")).grid(row=0, column=0, columnspan=9, pady=10)
 
         tk.Label(dialog, text="Name", font=("Arial", 10, "bold")).grid(row=1, column=0)
         tk.Label(dialog, text="Lower HSV", font=("Arial", 10, "bold")).grid(row=1, column=1)
         tk.Label(dialog, text="Upper HSV", font=("Arial", 10, "bold")).grid(row=1, column=2)
         tk.Label(dialog, text="Color", font=("Arial", 10, "bold")).grid(row=1, column=3)
         tk.Label(dialog, text="Condition", font=("Arial", 10, "bold")).grid(row=1, column=4)
+        tk.Label(dialog, text="Exposure", font=("Arial", 10, "bold")).grid(row=1, column=5)
+        tk.Label(dialog, text="WB Temp", font=("Arial", 10, "bold")).grid(row=1, column=6)
+        tk.Label(dialog, text="Focus", font=("Arial", 10, "bold")).grid(row=1, column=7)
 
         for i, (name, data) in enumerate(collection.items()):
             lower = data.item().get("lower_bound") if hasattr(data, "item") else data["lower_bound"]
             upper = data.item().get("upper_bound") if hasattr(data, "item") else data["upper_bound"]
             condition = data.item().get("condition", "") if hasattr(data, "item") else data.get("condition", "")
+            exposure = data.item().get("exposure", "N/A") if hasattr(data, "item") else data.get("exposure", "N/A")
+            wb_temp = data.item().get("wb_temp", "N/A") if hasattr(data, "item") else data.get("wb_temp", "N/A")
+            focus = data.item().get("focus", "N/A") if hasattr(data, "item") else data.get("focus", "N/A")
             avg_hsv = ((lower.astype(int) + upper.astype(int)) // 2).astype(np.uint8)
             avg_bgr = cv2.cvtColor(np.uint8([[avg_hsv]]), cv2.COLOR_HSV2BGR)[0][0]
             avg_hex = '#%02x%02x%02x' % (int(avg_bgr[2]), int(avg_bgr[1]), int(avg_bgr[0]))
@@ -322,6 +403,9 @@ class ColorCalibrationApp:
             tk.Label(dialog, text=str(upper)).grid(row=i+2, column=2)
             tk.Label(dialog, width=6, height=1, bg=avg_hex).grid(row=i+2, column=3, padx=4, pady=2)
             tk.Label(dialog, text=str(condition)).grid(row=i+2, column=4)
+            tk.Label(dialog, text=str(exposure)).grid(row=i+2, column=5)
+            tk.Label(dialog, text=str(wb_temp)).grid(row=i+2, column=6)
+            tk.Label(dialog, text=str(focus)).grid(row=i+2, column=7)
 
     def delete_last_point(self):
         if self.selected_hsvs and self.selected_bgrs:
