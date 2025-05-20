@@ -5,6 +5,8 @@ import cv2
 import numpy as np
 import os
 
+#beans
+
 COLOR_COLLECTION_FILE = "color_collection.npz"
 
 class DoubleSlider(tk.Canvas):
