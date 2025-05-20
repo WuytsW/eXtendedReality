@@ -271,6 +271,34 @@ def main():
         print(f"No colors found for condition '{condition}'. Exiting.")
         return
 
+    # --- Load camera settings from color collection ---
+    if os.path.exists(COLOR_COLLECTION_FILE):
+        collection = dict(np.load(COLOR_COLLECTION_FILE, allow_pickle=True))
+        # Find the first color with matching condition to get settings
+        for data in collection.values():
+            v = data.item() if hasattr(data, "item") else data
+            if v.get("condition", "") == condition:
+                exposure = v.get("exposure", -4)
+                wb_temp = v.get("wb_temp", 4500)
+                webcam_name = v.get("webcam", "Unknown")
+                focus = v.get("focus", 0)
+                print(f"Using camera settings from color '{v.get('name', 'Unknown Color')}':")
+                print(f"  Webcam: {webcam_name}")
+                print(f"  Exposure: {exposure}")
+                print(f"  White Balance: {wb_temp}")
+                print(f"  Focus: {focus}")
+                break
+        else:
+            exposure = -4
+            wb_temp = 4500
+            focus = 0
+            print("No matching color found in collection. Using default camera settings.")
+    else:
+        exposure = -4
+        wb_temp = 4500
+        focus = 0
+        print("No color collection file found. Using default camera settings.")
+
     color_names = [c.get_name() for c in all_tracked_colors]
     cat_name, mouse_name = select_cat_mouse_names(color_names, previous_cat, previous_mouse)
     previous_cat = cat_name
@@ -281,11 +309,11 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     cap.set(cv2.CAP_PROP_FPS, 60)
     cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)  # Manual mode
-    cap.set(cv2.CAP_PROP_EXPOSURE, -4)         # Adjust this based on trial
+    cap.set(cv2.CAP_PROP_EXPOSURE, exposure)         # Adjust this based on trial
     cap.set(cv2.CAP_PROP_AUTO_WB, 0)
-    cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 4500) # Between 4000–6000 K for neutral
-
-
+    cap.set(cv2.CAP_PROP_WB_TEMPERATURE, wb_temp) # Between 4000–6000 K for neutral
+    cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+    cap.set(cv2.CAP_PROP_FOCUS, focus)
 
     ## DEBUG ## Color print in BGR
     print_color = {color.get_name(): (0, 255, 0) for color in all_tracked_colors}
@@ -438,3 +466,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
