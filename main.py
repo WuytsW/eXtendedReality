@@ -132,14 +132,6 @@ def initialize_kalman_filter():
     kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 1e-1
     return kf
 
-
-# MQTT settings
-broker = "broker.hivemq.com"
-port = 1883
-topic = "XRCatAndMouse/1111"
-client = mqtt.Client()
-client.connect(broker, port, 60)
-
 SEND_FREQUENCY_HZ = 30  # Adjust how often data is sent (Hz)
 SEND_INTERVAL = 1.0 / SEND_FREQUENCY_HZ
 last_send_time = 0
@@ -305,9 +297,11 @@ def main():
     previous_mouse = mouse_name
 
     cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-    cap.set(cv2.CAP_PROP_FPS, 60)
+        ## START LONG WAITING TIME
+    # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+    # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+    # cap.set(cv2.CAP_PROP_FPS, 60)
+        ## END LONG WAITING TIME
     cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)  # Manual mode
     cap.set(cv2.CAP_PROP_EXPOSURE, exposure)         # Adjust this based on trial
     cap.set(cv2.CAP_PROP_AUTO_WB, 0)
@@ -335,6 +329,14 @@ def main():
 
     display_width = 960
     display_height = 540
+
+    # MQTT settings
+    broker = "broker.hivemq.com"
+    port = 1883
+    topic = "XRCatAndMouse/1111"
+    # topic = "catmouse/coordinates"
+    client = mqtt.Client()
+    client.connect(broker, port, 60)
 
     global last_send_time
 
@@ -422,11 +424,11 @@ def main():
                                     previous_hsv[name] = (H, S, V)
 
                                     ## DEBUG HSV adaptive cap
-                                    if prev_hsv is not None:
-                                        Xh = abs(int(H) - int(prev_hsv[0]))
-                                        Xs = abs(int(S) - int(prev_hsv[1]))
-                                        Xv = abs(int(V) - int(prev_hsv[2]))
-                                        print(f"{name} H: {Xh} S: {Xs}  V:  {Xv}" )
+                                    # if prev_hsv is not None:
+                                    #     Xh = abs(int(H) - int(prev_hsv[0]))
+                                    #     Xs = abs(int(S) - int(prev_hsv[1]))
+                                    #     Xv = abs(int(V) - int(prev_hsv[2]))
+                                    #     print(f"{name} H: {Xh} S: {Xs}  V:  {Xv}" )
 
                         elif min_dist < reset_threshold:
                             cv2.circle(warped, (pred_x, pred_y), 5, print_compl_color[name], -1)
@@ -472,7 +474,7 @@ def main():
                 }
                 json_message = json.dumps(message)
                 client.publish(topic, json_message)
-                # print(f"Sent data: {json_message}")  # Show sent data in the console
+                print(f"Sent data: {json_message}")  # Show sent data in the console
                 last_send_time = now
 
             if cv2.waitKey(1) & 0xFF == ord('q'):

@@ -47,8 +47,8 @@ class HomographyCalibrationApp:
         self.root.title("Homography Calibration")
         self.fsm = HomographyCalibrationFSM.HomographyCalibrationFSM()
         self.cap = cv2.VideoCapture(0)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_height)
+        # self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_width)
+        # self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_height)
         self.frame = None
         self.display_width = calib_disp_width
         self.display_height = calib_disp_height
