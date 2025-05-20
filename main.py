@@ -1,11 +1,12 @@
 import cv2
 import numpy as np
-from color_ranges import green, purple, yellow, blue, white
+from color import Color
 from matplotlib.colors import CSS4_COLORS
 import matplotlib
 import paho.mqtt.client as mqtt
 import time
 import json
+import os
 
 # Define expected area (in pixels)
 EXPECTED_AREA = 150  # Adjust this value based on your use case
@@ -17,6 +18,17 @@ play_center = tuple(data["play_center"])
 play_radius = int(data["play_radius"])
 calibration_resolution = tuple(data["calibration_resolution"]) if "calibration_resolution" in data else None
 square_diagonal_m = float(data["square_diagonal_m"]) if "square_diagonal_m" in data else None
+
+# Print homography calibration settings before starting
+print("=== Homography Calibration Settings ===")
+print(f"homography:\n{homography}")
+print(f"play_center: {play_center}")
+print(f"play_radius: {play_radius}")
+print(f"calibration_resolution: {calibration_resolution}")
+print(f"square_diagonal_m: {square_diagonal_m}")
+if "margin_m" in data:
+    print(f"margin_m: {data['margin_m']}")
+print("=======================================")
 
 for key in data.files:
     print(f"{key}:")
@@ -128,14 +140,108 @@ topic = "XRCatAndMouse/1111"
 client = mqtt.Client()
 client.connect(broker, port, 60)
 
-SEND_FREQUENCY_HZ = 10  # Adjust how often data is sent (Hz)
+SEND_FREQUENCY_HZ = 30  # Adjust how often data is sent (Hz)
 SEND_INTERVAL = 1.0 / SEND_FREQUENCY_HZ
 last_send_time = 0
+
+COLOR_COLLECTION_FILE = "color_collection.npz"
+
+def load_colors_for_condition(condition):
+    if not os.path.exists(COLOR_COLLECTION_FILE):
+        print("No color collection file found.")
+        return []
+    collection = dict(np.load(COLOR_COLLECTION_FILE, allow_pickle=True))
+    colors = []
+    for name, data in collection.items():
+        v = data.item() if hasattr(data, "item") else data
+        if v.get("condition", "") == condition:
+            colors.append(Color(
+                name=name,
+                lower_bound=v["lower_bound"],
+                upper_bound=v["upper_bound"],
+                condition=v.get("condition", "")
+            ))
+    return colors
+
+def select_condition(previous_condition=None):
+    # Find all unique conditions in the color collection
+    if not os.path.exists(COLOR_COLLECTION_FILE):
+        print("No color collection file found.")
+        return None
+    collection = dict(np.load(COLOR_COLLECTION_FILE, allow_pickle=True))
+    conditions = set()
+    for v in collection.values():
+        v = v.item() if hasattr(v, "item") else v
+        cond = v.get("condition", "")
+        if cond:
+            conditions.add(cond)
+    if not conditions:
+        print("No conditions found in color collection.")
+        return None
+    print("Available conditions:")
+    sorted_conditions = sorted(conditions)
+    for idx, cond in enumerate(sorted_conditions):
+        print(f"{idx+1}: {cond}")
+    if previous_condition:
+        print(f"Press Enter to use previous condition: '{previous_condition}'")
+    while True:
+        sel = input("Select condition by number: ")
+        if sel.strip() == "" and previous_condition:
+            return previous_condition
+        try:
+            sel_int = int(sel)
+            if 1 <= sel_int <= len(sorted_conditions):
+                return sorted_conditions[sel_int-1]
+        except Exception:
+            pass
+        print("Invalid selection.")
+
+def select_cat_mouse_names(color_names, prev_cat=None, prev_mouse=None):
+    print("\nAvailable colors:")
+    for idx, name in enumerate(color_names):
+        print(f"{idx+1}: {name}")
+    # Cat selection
+    if prev_cat and prev_cat in color_names:
+        print(f"Press Enter to use previous cat: '{prev_cat}'")
+    while True:
+        sel = input("Select cat color by number: ")
+        if sel.strip() == "" and prev_cat and prev_cat in color_names:
+            cat = prev_cat
+            break
+        try:
+            sel_int = int(sel)
+            if 1 <= sel_int <= len(color_names):
+                cat = color_names[sel_int-1]
+                break
+        except Exception:
+            pass
+        print("Invalid selection.")
+    # Mouse selection
+    if prev_mouse and prev_mouse in color_names:
+        print(f"Press Enter to use previous mouse: '{prev_mouse}'")
+    while True:
+        sel = input("Select mouse color by number: ")
+        if sel.strip() == "" and prev_mouse and prev_mouse in color_names:
+            mouse = prev_mouse
+            break
+        try:
+            sel_int = int(sel)
+            if 1 <= sel_int <= len(color_names):
+                mouse = color_names[sel_int-1]
+                if mouse == cat:
+                    print("Mouse and cat cannot be the same color.")
+                    continue
+                break
+        except Exception:
+            pass
+        print("Invalid selection.")
+    return cat, mouse
 
 def transform_to_play_area_meters(pos, play_center, play_radius, square_diagonal_m):
     """
     Transform pixel coordinates to play area coordinates in meters:
     - Center is (0,0)
+    - Top of the frame is positive Y, right is positive X
     - Range is -diagonal/2 to diagonal/2 in both x and y (in meters)
     """
     if pos is None or pos["x"] is None or pos["y"] is None or square_diagonal_m is None:
@@ -144,13 +250,32 @@ def transform_to_play_area_meters(pos, play_center, play_radius, square_diagonal
     pixels_per_meter = (play_radius * 2) / square_diagonal_m
     # Shift to center, then convert to meters
     dx = (pos["x"] - play_center[0]) / pixels_per_meter
-    dy = (pos["y"] - play_center[1]) / pixels_per_meter
+    dy = (play_center[1] - pos["y"]) / pixels_per_meter  # Y axis: top is positive
     return {
         "x": round(dx, 4),
         "y": round(dy, 4)
     }
 
 def main():
+    # --- Select condition and load colors ---
+    previous_condition = None
+    previous_cat = None
+    previous_mouse = None
+    condition = select_condition(previous_condition)
+    if not condition:
+        print("No valid condition selected. Exiting.")
+        return
+    previous_condition = condition
+    all_tracked_colors = load_colors_for_condition(condition)
+    if not all_tracked_colors:
+        print(f"No colors found for condition '{condition}'. Exiting.")
+        return
+
+    color_names = [c.get_name() for c in all_tracked_colors]
+    cat_name, mouse_name = select_cat_mouse_names(color_names, previous_cat, previous_mouse)
+    previous_cat = cat_name
+    previous_mouse = mouse_name
+
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
@@ -161,7 +286,6 @@ def main():
     cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 4500) # Between 4000–6000 K for neutral
 
 
-    all_tracked_colors = [green, purple, yellow, blue]
 
     ## DEBUG ## Color print in BGR
     print_color = {"Green": (0, 255, 0), "Purple": (255, 0, 255), "Yellow": (0, 200, 255), "Blue": (255, 135, 0),
@@ -174,28 +298,23 @@ def main():
     contour_threshold_list = {"Green": 2, "Purple": 2, "Yellow": 2, "Blue": 2, "White": 2}
     reset_threshold_list = {"Green": 4  , "Purple": 4, "Yellow": 4, "Blue": 4, "White": 4}
     adaptive_hsv_bounds = {color.get_name(): None for color in all_tracked_colors}
-    ## Initialize KF
     kalman_filters = {}
     initialized_flags = {}
     for color in all_tracked_colors:
         kalman_filters[color.get_name()] = initialize_kalman_filter()
         initialized_flags[color.get_name()] = False
 
-    # Set display resolution (fits twice on most screens, 16:9)
     display_width = 960
     display_height = 540
 
-    # For MQTT sending
     global last_send_time
 
-    # Actual loop
     try:
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            # Resize to calibration resolution if present
             if calibration_resolution is not None:
                 frame = cv2.resize(frame, calibration_resolution, interpolation=cv2.INTER_AREA)
 
@@ -215,11 +334,9 @@ def main():
             frame_hsv = cv2.cvtColor(frame_eq, cv2.COLOR_BGR2HSV)
 
 
-            # Prepare detected positions for MQTT
             detected_positions = {}
 
             for color in all_tracked_colors:
-                # KF
                 name = color.get_name()
                 kf = kalman_filters[name]
                 initialized = initialized_flags[name]
@@ -237,22 +354,17 @@ def main():
                     ## Predefined HSV
                     contours = detect_color(frame_hsv, color)
 
-                # KF prediction
                 prediction = kf.predict()
                 pred_x, pred_y = int(prediction[0]), int(prediction[1])
 
-                if contours:  # If a contour detected
-                    ## Function for closest blob to prediction
+                if contours:
                     min_dist, best_cx, best_cy = get_closest_blob_to_prediction(contours, pred_x, pred_y)
-
                     if best_cx is not None and best_cy is not None:
                         detected_positions[name] = {"x": float(best_cx), "y": float(best_cy)}
-                        # INITIALIZE KALMAN FILTER only first time
                         if not initialized:
                             kf.statePost = np.array([[best_cx], [best_cy], [0], [0]], np.float32)
                             initialized = True
 
-                        # MEASUREMNT
                         if min_dist < contour_threshold:
                             measurement = np.array([[best_cx], [best_cy]], np.float32)
                             est = kf.correct(measurement)
@@ -277,17 +389,11 @@ def main():
                             cv2.putText(warped, f"KF PREDICTION for {name}: bad measurement", (pred_x + 10, pred_y + 20),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, print_compl_color[name], 1)
                         else:
-                            # Preserve velocity from the last known state
                             vx = kf.statePost[2][0]
                             vy = kf.statePost[3][0]
-
-                            # Optionally apply damping to avoid runaway drift
                             vx *= decay_factor
                             vy *= decay_factor
-
-                            # Reinitialize position but keep velocity
                             kf.statePost = np.array([[best_cx], [best_cy], [vx], [vy]], np.float32)
-
                             cv2.circle(warped, (pred_x, pred_y), 5, print_compl_color[name], -1)
                             cv2.putText(warped, f"KF PREDICTION for {name}: VELOCITY", (pred_x + 10, pred_y + 20),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, print_compl_color[name], 1)
@@ -297,29 +403,32 @@ def main():
                 else:
                     detected_positions[name] = None                
 
-            # Resize warped frame for display
             warped_display = cv2.resize(warped, (display_width, display_height), interpolation=cv2.INTER_AREA)
-
-            # Show the warped (homography-transformed) camera view instead of the normal frame
             cv2.imshow('Color Tracking', warped_display)
 
-            # MQTT sending logic
             now = time.time()
             if now - last_send_time >= SEND_INTERVAL:
-                # Example: send green as "cat", blue as "mouse"
-                cat_pixel = detected_positions.get("Green", {"x": None, "y": None})
-                mouse_pixel = detected_positions.get("Blue", {"x": None, "y": None})
+                # Use selected cat and mouse names
+                cat_pixel = detected_positions.get(cat_name, {"x": None, "y": None})
+                mouse_pixel = detected_positions.get(mouse_name, {"x": None, "y": None})
                 cat = transform_to_play_area_meters(cat_pixel, play_center, play_radius, square_diagonal_m)
                 mouse = transform_to_play_area_meters(mouse_pixel, play_center, play_radius, square_diagonal_m)
+                # Apply rounding as in mqtt_example
                 message = {
                     "message": "coordinates",
-                    "timestamp": int(now * 1000),
-                    "cat": cat,
-                    "mouse": mouse
+                    "timestamp": round(now * 1000, 3),
+                    "cat": {
+                        "x": round(cat["x"], 1) if cat["x"] is not None else None,
+                        "y": round(cat["y"], 1) if cat["y"] is not None else None
+                    },
+                    "mouse": {
+                        "x": round(mouse["x"], 1) if mouse["x"] is not None else None,
+                        "y": round(mouse["y"], 1) if mouse["y"] is not None else None
+                    }
                 }
                 json_message = json.dumps(message)
                 client.publish(topic, json_message)
-                # print(f"Published: {json_message}")
+                print(f"Sent data: {json_message}")  # Show sent data in the console
                 last_send_time = now
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -328,7 +437,6 @@ def main():
         cap.release()
         cv2.destroyAllWindows()
         client.disconnect()
-
 
 if __name__ == "__main__":
     main()
