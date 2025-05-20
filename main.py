@@ -288,15 +288,13 @@ def main():
 
 
     ## DEBUG ## Color print in BGR
-    print_color = {"Green": (0, 255, 0), "Purple": (255, 0, 255), "Yellow": (0, 200, 255), "Blue": (255, 135, 0),
-                   "White": (255, 255, 255)}
-    print_compl_color = {"Green": (0, 0, 255), "Purple": (0, 255, 255), "Yellow": (255, 120, 175),
-                         "Blue": (0, 135, 255), "White": (0, 0, 0)}
+    print_color = {color.get_name(): (0, 255, 0) for color in all_tracked_colors}
+    print_compl_color = {color.get_name(): (0, 0, 255) for color in all_tracked_colors}
 
     ## PARAMETER for Detection AND prediction 
     decay_factor = 0.9
-    contour_threshold_list = {"Green": 2, "Purple": 2, "Yellow": 2, "Blue": 2, "White": 2}
-    reset_threshold_list = {"Green": 4  , "Purple": 4, "Yellow": 4, "Blue": 4, "White": 4}
+    contour_threshold_list = {color.get_name(): 2 for color in all_tracked_colors}
+    reset_threshold_list = {color.get_name(): 4 for color in all_tracked_colors}
     adaptive_hsv_bounds = {color.get_name(): None for color in all_tracked_colors}
     kalman_filters = {}
     initialized_flags = {}
