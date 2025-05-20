@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 
 class Color:
-    def __init__(self, name: str, lower_bound: np.ndarray, upper_bound: np.ndarray):
+    def __init__(self, name: str, lower_bound: np.ndarray, upper_bound: np.ndarray, condition: str = None):
         self.name = name
         self.lower_bound = lower_bound
         self.upper_bound = upper_bound
@@ -31,3 +31,6 @@ class Color:
         kf.processNoiseCov = np.eye(4, dtype=np.float32) * 1e-2
         kf.measurementNoiseCov = np.eye(2, dtype=np.float32) * 1e-1
         return kf
+    def get_condition(self):
+        """Return the condition of the color."""
+        return self.condition
