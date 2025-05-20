@@ -36,28 +36,18 @@ def color_name_to_rgb(color_name):
 def detect_color(frame_hsv, color):
     """Detect contours for a given color."""
     mask = cv2.inRange(frame_hsv, color.get_lower_bound(), color.get_upper_bound())
-    kernel = np.ones((5, 5), np.uint8)
-    mask_closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-    contours, _ = cv2.findContours(mask_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    kernel = np.ones((2, 2), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     return contours
 
-
-def detect_color_morpho(frame_hsv, color):  # inconsisent lighting
-    """Detect contours for a given color."""
-    mask = cv2.inRange(frame_hsv, color.get_lower_bound(), color.get_upper_bound())
-    kernel = np.ones((5, 5), np.uint8)
-    mask_open_closed = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)
-    mask_open_closed = cv2.morphologyEx(mask_open_closed, cv2.MORPH_CLOSE, kernel, iterations=2)
-    contours, _ = cv2.findContours(mask_open_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    return contours
-
-def adaptive_detect_color_morpho(frame_hsv, adaptive_hsv_bounds):
+def adaptive_detect_color(frame_hsv, adaptive_hsv_bounds):
     """Detect contours for a given color with adaptive HSV mask."""
     lower, upper = adaptive_hsv_bounds
     mask = cv2.inRange(frame_hsv, lower, upper)
-    kernel = np.ones((5, 5), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=2)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    kernel = np.ones((2, 2), np.uint8)
+    # mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     return contours
 
@@ -107,7 +97,7 @@ def get_closest_blob_to_prediction(contours, pred_x, pred_y):
     min_dist = float('inf')
 
     for contour in contours:
-        if cv2.contourArea(contour) > 100:
+        if cv2.contourArea(contour) > 1:
             M = cv2.moments(contour)
             if M["m00"] != 0:
                 cx = float(M["m10"] / M["m00"])
@@ -165,6 +155,11 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     cap.set(cv2.CAP_PROP_FPS, 60)
+    cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)  # Manual mode
+    cap.set(cv2.CAP_PROP_EXPOSURE, -4)         # Adjust this based on trial
+    cap.set(cv2.CAP_PROP_AUTO_WB, 0)
+    cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 4500) # Between 4000–6000 K for neutral
+
 
     all_tracked_colors = [green, purple, yellow, blue]
 
@@ -175,9 +170,9 @@ def main():
                          "Blue": (0, 135, 255), "White": (0, 0, 0)}
 
     ## PARAMETER for Detection AND prediction 
-    decay_factor = 0.5
+    decay_factor = 0.9
     contour_threshold_list = {"Green": 2, "Purple": 2, "Yellow": 2, "Blue": 2, "White": 2}
-    reset_threshold_list = {"Green": 50, "Purple": 50, "Yellow": 50, "Blue": 50, "White": 50}
+    reset_threshold_list = {"Green": 4  , "Purple": 4, "Yellow": 4, "Blue": 4, "White": 4}
     adaptive_hsv_bounds = {color.get_name(): None for color in all_tracked_colors}
     ## Initialize KF
     kalman_filters = {}
@@ -204,11 +199,21 @@ def main():
             if calibration_resolution is not None:
                 frame = cv2.resize(frame, calibration_resolution, interpolation=cv2.INTER_AREA)
 
-            # Apply homography transformation
+            # # Apply homography transformation
             warped = cv2.warpPerspective(frame, homography, (frame.shape[1], frame.shape[0]))
 
-            # Use the warped frame for color detection
-            frame_hsv = cv2.cvtColor(warped, cv2.COLOR_BGR2HSV)
+            # # Use the warped frame for color detection
+            # frame_hsv = cv2.cvtColor(warped, cv2.COLOR_BGR2HSV)
+
+            # Apply LAB equalization before converting to HSV
+            lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            l_eq = clahe.apply(l)
+            lab_eq = cv2.merge([l_eq, a, b])
+            frame_eq = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
+            frame_hsv = cv2.cvtColor(frame_eq, cv2.COLOR_BGR2HSV)
+
 
             # Prepare detected positions for MQTT
             detected_positions = {}
@@ -226,10 +231,11 @@ def main():
 
                 if adaptive_hsv_bounds[name] is not None:
                     ## Adaptive HSV
-                    contours = adaptive_detect_color_morpho(frame_hsv, adaptive_hsv_bounds[name])                
+                    contours = adaptive_detect_color(frame_hsv, adaptive_hsv_bounds[name])                
+                    # contours = detect_color(frame_hsv, color)
                 else:
                     ## Predefined HSV
-                    contours = detect_color_morpho(frame_hsv, color)
+                    contours = detect_color(frame_hsv, color)
 
                 # KF prediction
                 prediction = kf.predict()
@@ -254,6 +260,18 @@ def main():
                             cv2.circle(warped, (est_x, est_y), 5, print_color[name], -1)
                             cv2.putText(warped, f"Measuremnt for {name}: ({est_x},{est_y})", (est_x + 10, est_y),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, print_color[name], 1)
+
+                            # Adaptive HSV sampling
+                            sample_size = 4
+                            cx, cy = int(best_cx), int(best_cy)
+                            patch = frame_hsv[max(0, cy-sample_size):cy+sample_size, max(0, cx-sample_size):cx+sample_size]
+                            if patch.size > 0:
+                                avg_hsv = patch.mean(axis=(0, 1)).astype(np.uint8)
+                                H, S, V = avg_hsv
+                                lower = np.array([max(H-5, 0), max(S-20, 0), max(V-20, 0)])
+                                upper = np.array([min(H+5, 179), min(S+20, 255), min(V+20, 255)])
+                                adaptive_hsv_bounds[name] = (lower, upper)
+
                         elif min_dist < reset_threshold:
                             cv2.circle(warped, (pred_x, pred_y), 5, print_compl_color[name], -1)
                             cv2.putText(warped, f"KF PREDICTION for {name}: bad measurement", (pred_x + 10, pred_y + 20),
@@ -273,11 +291,11 @@ def main():
                             cv2.circle(warped, (pred_x, pred_y), 5, print_compl_color[name], -1)
                             cv2.putText(warped, f"KF PREDICTION for {name}: VELOCITY", (pred_x + 10, pred_y + 20),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, print_compl_color[name], 1)
-                            print(f"[{name}] Reinitialized with preserved velocity. dist = {min_dist:.2f}")            
+                            # print(f"[{name}] Reinitialized with preserved velocity. dist = {min_dist:.2f}")            
                     else:
                         detected_positions[name] = None
                 else:
-                    detected_positions[name] = None
+                    detected_positions[name] = None                
 
             # Resize warped frame for display
             warped_display = cv2.resize(warped, (display_width, display_height), interpolation=cv2.INTER_AREA)
@@ -314,4 +332,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
