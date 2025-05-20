@@ -295,7 +295,12 @@ def main():
     decay_factor = 0.9
     contour_threshold_list = {color.get_name(): 2 for color in all_tracked_colors}
     reset_threshold_list = {color.get_name(): 4 for color in all_tracked_colors}
+    ## Adaptive HSV parameters
     adaptive_hsv_bounds = {color.get_name(): None for color in all_tracked_colors}
+    previous_hsv = {color.get_name(): None for color in all_tracked_colors}
+    last_hsv_update_frame = {color.get_name(): 0 for color in all_tracked_colors}
+    frame_counter = 0
+    ## Kalman Filter param
     kalman_filters = {}
     initialized_flags = {}
     for color in all_tracked_colors:
@@ -378,9 +383,24 @@ def main():
                             if patch.size > 0:
                                 avg_hsv = patch.mean(axis=(0, 1)).astype(np.uint8)
                                 H, S, V = avg_hsv
-                                lower = np.array([max(H-5, 0), max(S-20, 0), max(V-20, 0)])
-                                upper = np.array([min(H+5, 179), min(S+20, 255), min(V+20, 255)])
-                                adaptive_hsv_bounds[name] = (lower, upper)
+                                # Compare with previous hsv
+                                prev_hsv = previous_hsv[name]
+                                if prev_hsv is None or (
+                                    abs(int(H) - int(prev_hsv[0])) < 10 and
+                                    abs(int(S) - int(prev_hsv[1])) < 15 and
+                                    abs(int(V) - int(prev_hsv[2])) < 10
+                                ):
+                                    ## DEBUG HSV adaptive cap
+                                    if prev_hsv is not None:
+                                        Xh = abs(int(H) - int(prev_hsv[0]))
+                                        Xs = abs(int(S) - int(prev_hsv[1]))
+                                        Xv = abs(int(V) - int(prev_hsv[2]))
+                                        print(f"{name} H: {Xh} S: {Xs}  V:  {Xv}" )
+                                
+                                    lower = np.array([max(H - 5, 0), max(S - 20, 0), max(V - 20, 0)])
+                                    upper = np.array([min(H + 5, 179), min(S + 20, 255), min(V + 20, 255)])
+                                    adaptive_hsv_bounds[name] = (lower, upper)
+                                    previous_hsv[name] = (H, S, V)
 
                         elif min_dist < reset_threshold:
                             cv2.circle(warped, (pred_x, pred_y), 5, print_compl_color[name], -1)
@@ -400,6 +420,15 @@ def main():
                         detected_positions[name] = None
                 else:
                     detected_positions[name] = None                
+
+            # Reset adaptive HSV if no update for 60 frames
+            # for name in adaptive_hsv_bounds:
+            #     if frame_counter - last_hsv_update_frame[name] > 180:
+            #         adaptive_hsv_bounds[name] = None
+            #         previous_hsv[name] = None
+
+            # frame_counter += 1
+
 
             warped_display = cv2.resize(warped, (display_width, display_height), interpolation=cv2.INTER_AREA)
             cv2.imshow('Color Tracking', warped_display)
@@ -426,7 +455,7 @@ def main():
                 }
                 json_message = json.dumps(message)
                 client.publish(topic, json_message)
-                print(f"Sent data: {json_message}")  # Show sent data in the console
+                # print(f"Sent data: {json_message}")  # Show sent data in the console
                 last_send_time = now
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
