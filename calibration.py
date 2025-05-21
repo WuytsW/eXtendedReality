@@ -6,23 +6,21 @@ import HomographyCalibrationFSM
 from calibration_helper import generate_square_points, draw_playing_area, calibrate_playing_area
 import numpy as np
 
-# Camera native resolution
-camera_width = 1920
-camera_height = 1080
-
 # Calibration display resolution (fits twice on most screens, 16:9)
 calib_disp_width = 960
 calib_disp_height = 540
 
-def save_calibration(homography, play_center, play_radius, calibration_resolution, diagonal_m, margin_m, filename="calibration_data.npz"):
+def save_calibration(homography, play_center, play_radius, calibration_resolution, diagonal_m, margin_m, src_pts, dst_pts, filename="calibration_data.npz"):
     np.savez(
         filename,
-        homography=homography,
+        homography=homography.astype(np.float64),
         play_center=play_center,
         play_radius=play_radius,
         calibration_resolution=calibration_resolution,
         square_diagonal_m=diagonal_m,
-        margin_m=margin_m
+        margin_m=margin_m,
+        homography_src_pts=src_pts,
+        homography_dst_pts=dst_pts
     )
 
 def get_reference_square(screen_width, screen_height, angle=-45, margin_percent=0.05):
@@ -47,11 +45,19 @@ class HomographyCalibrationApp:
         self.root.title("Homography Calibration")
         self.fsm = HomographyCalibrationFSM.HomographyCalibrationFSM()
         self.cap = cv2.VideoCapture(0)
-        # self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, camera_width)
-        # self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_height)
+        # Dynamically get camera resolution
+        self.camera_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.camera_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.frame = None
-        self.display_width = calib_disp_width
-        self.display_height = calib_disp_height
+
+        # --- Set display width to half the screen width, keep camera aspect ratio ---
+        screen_width = self.root.winfo_screenwidth()
+        self.display_width = screen_width // 2
+        aspect_ratio = self.camera_height / self.camera_width if self.camera_width != 0 else 9/16
+        self.display_height = int(self.display_width * aspect_ratio)
+
+        self.src_pts = None
+        self.dst_pts = None
 
         # Top frame for state label and buttons
         self.top_frame = tk.Frame(root)
@@ -106,8 +112,8 @@ class HomographyCalibrationApp:
 
         if self.fsm.state == "SHOW_WARP" and self.fsm.homography is not None:
             orig = disp_frame.copy()
-            scale_x = self.display_width / camera_width
-            scale_y = self.display_height / camera_height
+            scale_x = self.display_width / self.camera_width
+            scale_y = self.display_height / self.camera_height
             for idx, pt in enumerate(self.fsm.points):
                 disp_pt = (int(pt[0] * scale_x), int(pt[1] * scale_y))
                 cv2.circle(orig, disp_pt, 5, (0, 255, 0), -1)
@@ -123,11 +129,16 @@ class HomographyCalibrationApp:
             target_square = get_reference_square(w, h, angle, margin_percent=0.05)
             if len(self.fsm.points) == 4:
                 src_pts = np.array(self.fsm.points, dtype=np.float32)
-                dst_pts = np.array([
-                    (pt[0] * scale_x, pt[1] * scale_y) for pt in self.fsm.points
-                ], dtype=np.float32)
-                disp_homography, _ = cv2.findHomography(dst_pts, np.array(target_square, dtype=np.float32))
+                # Use the *target_square* as dst_pts in camera resolution
+                dst_pts = np.array(get_reference_square(self.camera_width, self.camera_height, angle, margin_percent=0.05), dtype=np.float32)
+                disp_homography, _ = cv2.findHomography(
+                    np.array([ (pt[0]*scale_x, pt[1]*scale_y) for pt in self.fsm.points ], dtype=np.float32),
+                    np.array(get_reference_square(self.display_width, self.display_height, angle, margin_percent=0.05), dtype=np.float32)
+                )
                 warped = cv2.warpPerspective(orig, disp_homography, (w, h))
+                # Save for reproducibility
+                self.src_pts = src_pts
+                self.dst_pts = dst_pts
             else:
                 warped = orig.copy()
             for idx, pt in enumerate(target_square):
@@ -147,8 +158,8 @@ class HomographyCalibrationApp:
             self.canvas.create_image(0, 0, anchor=tk.NW, image=imgtk)
         else:
             # Draw points on display frame
-            scale_x = self.display_width / camera_width
-            scale_y = self.display_height / camera_height
+            scale_x = self.display_width / self.camera_width
+            scale_y = self.display_height / self.camera_height
             for idx, pt in enumerate(self.fsm.points):
                 disp_pt = (int(pt[0] * scale_x), int(pt[1] * scale_y))
                 cv2.circle(disp_frame, disp_pt, 5, (0, 255, 0), -1)
@@ -182,8 +193,8 @@ class HomographyCalibrationApp:
     def on_canvas_click(self, event):
         # Map click to original camera resolution
         if self.fsm.state == "COLLECT_POINTS" and len(self.fsm.points) < 4:
-            x = int(event.x * camera_width / self.display_width)
-            y = int(event.y * camera_height / self.display_height)
+            x = int(event.x * self.camera_width / self.display_width)
+            y = int(event.y * self.camera_height / self.display_height)
             self.fsm.add_point((x, y))
 
     def on_confirm(self):
@@ -198,6 +209,9 @@ class HomographyCalibrationApp:
                 # Use new reference square with 5% margin, ensuring fit after rotation
                 target_square = get_reference_square(w, h, angle, margin_percent=0.05)
                 self.fsm.calculate(target_square)
+                # Save src/dst points for reproducibility
+                self.src_pts = np.array(self.fsm.points, dtype=np.float32)
+                self.dst_pts = np.array(target_square, dtype=np.float32)
             case "SHOW_WARP":
                 self.fsm.reset()
             case _:
@@ -221,7 +235,7 @@ class HomographyCalibrationApp:
 
     def on_save(self):
         if self.fsm.homography is not None:
-            h, w = camera_height, camera_width
+            h, w = self.camera_height, self.camera_width
             angle = -45
             diagonal_m = self.diagonal_m.get()
             if diagonal_m > 0:
@@ -232,9 +246,12 @@ class HomographyCalibrationApp:
             target_square = get_reference_square(w, h, angle, margin_percent=0.05)
             margin_m = self.margin_m.get()
             play_center, play_radius = calibrate_playing_area(target_square, real_square_size_m, margin_m)
-            calibration_resolution = (camera_width, camera_height)  # Save camera resolution, not display
+            calibration_resolution = (self.camera_width, self.camera_height)  # Save camera resolution, not display
             # Store diagonal_m and margin_m in calibration file
-            save_calibration(self.fsm.homography, play_center, play_radius, calibration_resolution, diagonal_m, margin_m)
+            # Save src/dst points for reproducibility
+            src_pts = np.array(self.fsm.points, dtype=np.float32) if self.src_pts is None else self.src_pts
+            dst_pts = np.array(target_square, dtype=np.float32) if self.dst_pts is None else self.dst_pts
+            save_calibration(self.fsm.homography, play_center, play_radius, calibration_resolution, diagonal_m, margin_m, src_pts, dst_pts)
 
 if __name__ == "__main__":
     root = tk.Tk()

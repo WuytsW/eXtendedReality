@@ -87,8 +87,15 @@ class ColorCalibrationApp:
         self.cap = cv2.VideoCapture(0)
         self.homography = homography
         self.frame = None
-        self.display_width = 640
-        self.display_height = 480
+
+        # --- Set display width to half the screen width, keep camera aspect ratio ---
+        screen_width = self.root.winfo_screenwidth()
+        camera_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        camera_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.display_width = screen_width // 2
+        aspect_ratio = camera_height / camera_width if camera_width != 0 else 9/16
+        self.display_height = int(self.display_width * aspect_ratio)
+
         self.selected_hsvs = []  # Store multiple HSVs
         self.selected_bgrs = []
 
