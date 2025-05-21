@@ -333,7 +333,7 @@ def main():
     # MQTT settings
     broker = "broker.hivemq.com"
     port = 1883
-    topic = "XRCatAndMouse/1111"
+    topic = "XRCatAndMouse/1113"
     # topic = "catmouse/coordinates"
     client = mqtt.Client()
     client.connect(broker, port, 60)
@@ -414,9 +414,9 @@ def main():
                                 # Compare with previous hsv
                                 prev_hsv = previous_hsv[name]
                                 if prev_hsv is None or (
-                                    abs(int(H) - int(prev_hsv[0])) < 10 and
-                                    abs(int(S) - int(prev_hsv[1])) < 15 and
-                                    abs(int(V) - int(prev_hsv[2])) < 10
+                                    abs(int(H) - int(prev_hsv[0])) < 15 and
+                                    abs(int(S) - int(prev_hsv[1])) < 20 and
+                                    abs(int(V) - int(prev_hsv[2])) < 153
                                 ):
                                     lower = np.array([max(H - 5, 0), max(S - 20, 0), max(V - 20, 0)])
                                     upper = np.array([min(H + 5, 179), min(S + 20, 255), min(V + 20, 255)])
