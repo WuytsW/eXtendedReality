@@ -297,11 +297,9 @@ def main():
     previous_mouse = mouse_name
 
     cap = cv2.VideoCapture(0)
-        ## START LONG WAITING TIME
     # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
     # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
     # cap.set(cv2.CAP_PROP_FPS, 60)
-        ## END LONG WAITING TIME
     cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)  # Manual mode
     cap.set(cv2.CAP_PROP_EXPOSURE, exposure)         # Adjust this based on trial
     cap.set(cv2.CAP_PROP_AUTO_WB, 0)
@@ -330,14 +328,6 @@ def main():
     display_width = 960
     display_height = 540
 
-    # MQTT settings
-    broker = "broker.hivemq.com"
-    port = 1883
-    topic = "XRCatAndMouse/1111"
-    # topic = "catmouse/coordinates"
-    client = mqtt.Client()
-    client.connect(broker, port, 60)
-
     global last_send_time
 
     try:
@@ -353,16 +343,16 @@ def main():
             warped = cv2.warpPerspective(frame, homography, (frame.shape[1], frame.shape[0]))
 
             # # Use the warped frame for color detection
-            # frame_hsv = cv2.cvtColor(warped, cv2.COLOR_BGR2HSV)
+            frame_hsv = cv2.cvtColor(warped, cv2.COLOR_BGR2HSV)
 
             # Apply LAB equalization before converting to HSV
-            lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
-            l, a, b = cv2.split(lab)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            l_eq = clahe.apply(l)
-            lab_eq = cv2.merge([l_eq, a, b])
-            frame_eq = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
-            frame_hsv = cv2.cvtColor(frame_eq, cv2.COLOR_BGR2HSV)
+            # lab = cv2.cvtColor(warped, cv2.COLOR_BGR2LAB)
+            # l, a, b = cv2.split(lab)
+            # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+            # l_eq = clahe.apply(l)
+            # lab_eq = cv2.merge([l_eq, a, b])
+            # frame_eq = cv2.cvtColor(lab_eq, cv2.COLOR_LAB2BGR)
+            # frame_hsv = cv2.cvtColor(frame_eq, cv2.COLOR_BGR2HSV)
 
 
             detected_positions = {}
@@ -409,7 +399,7 @@ def main():
                             cx, cy = int(best_cx), int(best_cy)
                             patch = frame_hsv[max(0, cy-sample_size):cy+sample_size, max(0, cx-sample_size):cx+sample_size]
                             if patch.size > 0:
-                                avg_hsv = patch.mean(axis=(0, 1)).astype(np.uint8)
+                                avg_hsv = patch.mean(axis=(0, 1)).astype(np.int16)
                                 H, S, V = avg_hsv
                                 # Compare with previous hsv
                                 prev_hsv = previous_hsv[name]
@@ -418,17 +408,21 @@ def main():
                                     abs(int(S) - int(prev_hsv[1])) < 15 and
                                     abs(int(V) - int(prev_hsv[2])) < 10
                                 ):
-                                    lower = np.array([max(H - 5, 0), max(S - 20, 0), max(V - 20, 0)])
-                                    upper = np.array([min(H + 5, 179), min(S + 20, 255), min(V + 20, 255)])
+                                    lower = np.array([max(H - 5, 0), max(S - 20, 0), max(V - 20, 0)]).astype(np.uint8)
+                                    upper = np.array([min(H + 5, 179), min(S + 20, 255), min(V + 20, 255)]).astype(
+                                        np.uint8)
+                                    H = np.uint8(H)
+                                    S = np.uint8(S)
+                                    V = np.uint8(V)
                                     adaptive_hsv_bounds[name] = (lower, upper)
                                     previous_hsv[name] = (H, S, V)
 
                                     ## DEBUG HSV adaptive cap
-                                    # if prev_hsv is not None:
-                                    #     Xh = abs(int(H) - int(prev_hsv[0]))
-                                    #     Xs = abs(int(S) - int(prev_hsv[1]))
-                                    #     Xv = abs(int(V) - int(prev_hsv[2]))
-                                    #     print(f"{name} H: {Xh} S: {Xs}  V:  {Xv}" )
+                                    if prev_hsv is not None:
+                                        Xh = abs(int(H) - int(prev_hsv[0]))
+                                        Xs = abs(int(S) - int(prev_hsv[1]))
+                                        Xv = abs(int(V) - int(prev_hsv[2]))
+                                        print(f"{name} H: {Xh} S: {Xs}  V:  {Xv}" )
 
                         elif min_dist < reset_threshold:
                             cv2.circle(warped, (pred_x, pred_y), 5, print_compl_color[name], -1)
@@ -473,8 +467,8 @@ def main():
                     }
                 }
                 json_message = json.dumps(message)
-                client.publish(topic, json_message)
-                print(f"Sent data: {json_message}")  # Show sent data in the console
+                # client.publish(topic, json_message)
+                # print(f"Sent data: {json_message}")  # Show sent data in the console
                 last_send_time = now
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -486,4 +480,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
