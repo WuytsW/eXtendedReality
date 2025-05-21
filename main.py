@@ -270,7 +270,7 @@ def main():
         for data in collection.values():
             v = data.item() if hasattr(data, "item") else data
             if v.get("condition", "") == condition:
-                exposure = v.get("exposure", -4)
+                exposure = v.get("exposure", -4)        
                 wb_temp = v.get("wb_temp", 4500)
                 webcam_name = v.get("webcam", "Unknown")
                 focus = v.get("focus", 0)
@@ -414,7 +414,7 @@ def main():
                                 if prev_hsv is None or (
                                     abs(int(H) - int(prev_hsv[0])) < 15 and
                                     abs(int(S) - int(prev_hsv[1])) < 20 and
-                                    abs(int(V) - int(prev_hsv[2])) < 153
+                                    abs(int(V) - int(prev_hsv[2])) < 15
                                 ):
                                     lower = np.array([max(H - 5, 0), max(S - 20, 0), max(V - 20, 0)]).astype(np.uint8)
                                     upper = np.array([min(H + 5, 179), min(S + 20, 255), min(V + 20, 255)]).astype(
@@ -476,7 +476,7 @@ def main():
                 }
                 json_message = json.dumps(message)
                 # client.publish(topic, json_message)
-                # print(f"Sent data: {json_message}")  # Show sent data in the console
+                print(f"Sent data: {json_message}")  # Show sent data in the console
                 last_send_time = now
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
